@@ -132,7 +132,7 @@ def player_sort_columns(prev_season):
         ("Acquired", None, None),
         ("Keeper Status", None, None),
         ("Keeper Cost", "keeper_value_round", True),
-        ("Years Remaining", "years_remaining_keepable", True),
+        ("Keeper Years Remaining", "years_remaining_keepable", True),
         ("Tags Remaining", "tags_remaining", True),
         ("Total Potential Years", "total_potential_keeper_years", True),
         (gp_header, "prev_season_games_played", False),
@@ -364,7 +364,7 @@ def render_player_detail(data, row):
         "Keeper Metrics",
         [
             ("Status", html_lib.escape(str(row["keeper_status_summary"]))),
-            ("Years Remaining", row["years_remaining_keepable"]),
+            ("Keeper Years Remaining", row["years_remaining_keepable"]),
             ("Tags Remaining", row["tags_remaining"]),
             ("Total Potential Years", row["total_potential_keeper_years"]),
         ],
