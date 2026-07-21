@@ -1,0 +1,8 @@
+# Manual overlay for things Sleeper's API has no concept of: franchise tags.
+# Key each player by their exact Sleeper display name (as shown on the dashboard).
+#
+# players:
+#   "Ja'Marr Chase":
+#     franchise_tag_years_used: 1   # 0 = not tagged, 1 = in year 1 of tag, 2 = in year 2 (max)
+
+players: {}
