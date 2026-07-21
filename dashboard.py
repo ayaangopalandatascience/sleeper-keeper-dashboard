@@ -120,7 +120,7 @@ def player_sort_columns(prev_season):
         ("", None, None),
         ("Name", "name", True),
         ("Pos", "position", True),
-        ("NFL", "nfl_team", True),
+        ("Team", "nfl_team", True),
         ("Age", "age", True),
         ("Fantasy Team", "fantasy_team", True),
         ("Acquired", None, None),
@@ -463,12 +463,8 @@ def main():
             filtered = filtered[filtered["total_potential_keeper_years"].isin(total_potential_filter)]
 
         sort_lookup = {label: (df_key, default_asc) for label, df_key, default_asc in player_sort_columns(data.get("prev_season")) if df_key}
-        sort_col1, sort_col2 = st.columns([5, 1])
-        with sort_col1:
-            sort_choice = st.pills("Sort by", list(sort_lookup.keys()), selection_mode="single")
-        with sort_col2:
-            st.write("")
-            reverse = st.checkbox("Reverse")
+        sort_choice = st.pills("Sort by", list(sort_lookup.keys()), selection_mode="single")
+        reverse = st.checkbox("Reverse")
 
         if sort_choice:
             sort_key, default_asc = sort_lookup[sort_choice]
