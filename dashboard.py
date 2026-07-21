@@ -110,36 +110,35 @@ def render_info_card(title, rows):
 
 
 def player_sort_columns(prev_season):
-    """(header label, df column, default-first-click-ascending) for every
-    clickable column, in table order. None as the df column means that header
+    """(header label, df column, default-first-click-ascending, help text) for
+    every column, in table order. None as the df column means that header
     isn't sortable (headshot image, or long free-text columns)."""
-    gp_header = f"{prev_season} GP" if prev_season else "GP"
-    ppg_header = f"{prev_season} PPG" if prev_season else "PPG"
-    finish_header = f"{prev_season} Finish" if prev_season else "Finish"
+    season_label = prev_season or "Last season"
     return [
-        ("", None, None),
-        ("Name", "name", True),
-        ("Pos", "position", True),
-        ("Team", "nfl_team", True),
-        ("Age", "age", True),
-        ("Fantasy Team", "fantasy_team", True),
-        ("Acquired", None, None),
-        ("Keeper Status", None, None),
-        ("Keeper Cost", "keeper_value_round", True),
-        ("Keeper Years Remaining", "years_remaining_keepable", True),
-        ("Tags Remaining", "tags_remaining", True),
-        ("Total Potential Years", "total_potential_keeper_years", True),
-        (gp_header, "prev_season_games_played", False),
-        (ppg_header, "prev_season_ppg", False),
-        (finish_header, "prev_season_position_rank", True),
+        ("", None, None, ""),
+        ("Name", "name", True, "Click a player's name to open their full profile."),
+        ("Pos", "position", True, "The position Sleeper lists for this player."),
+        ("Team", "nfl_team", True, "The player's real NFL team ('FA' if currently unsigned)."),
+        ("Age", "age", True, "Player's current age."),
+        ("Fantasy Team", "fantasy_team", True, "Which manager currently rosters this player."),
+        ("Acquired", None, None, "Full chronological history of how this player entered the league and moved between rosters - draft, trade, waiver, keeper."),
+        ("Keeper Status", None, None, "Where this player's keeper value originated: the season/round they were drafted (or 'UDFA'), and who drafted them."),
+        ("Keeper Cost", "keeper_value_round", True, "The draft round it costs to keep this player next season."),
+        ("Keeper Years Remaining", "years_remaining_keepable", True, "How many more seasons this player can still be kept under the standard tenure rule (3 total seasons for drafted players, 2 for UDFAs) before they reset to the draft pool."),
+        ("Tags Remaining", "tags_remaining", True, "Franchise-tag years still available for this player. Depends on their draft round (tag costs R-1 then R-2, so round-1 players get 0, round-2 get 1, round 3+ get 2) - UDFAs are never tag-eligible."),
+        ("Total Potential Years", "total_potential_keeper_years", True, "Keeper Years Remaining + Tags Remaining combined - the max total seasons this player could still be retained by any means."),
+        (f"{season_label} GP", "prev_season_games_played", False, f"Games played in the {season_label} season."),
+        (f"{season_label} PPG", "prev_season_ppg", False, f"Points per game in {season_label}, scored under this league's actual scoring format."),
+        (f"{season_label} Finish", "prev_season_position_rank", True, f"{season_label} finish among all players at their position (e.g. 'RB2' = 2nd-best RB)."),
     ]
 
 
-def _plain_header_html(label, df_key, current_sort_col, current_sort_ascending):
+def _plain_header_html(label, df_key, help_text, current_sort_col, current_sort_ascending):
+    title_attr = f' title="{html_lib.escape(help_text)}"' if help_text else ""
     if df_key is None or df_key != current_sort_col:
-        return f"<th>{html_lib.escape(label)}</th>"
+        return f"<th{title_attr}>{html_lib.escape(label)}</th>"
     arrow = " ▲" if current_sort_ascending else " ▼"
-    return f'<th style="color:var(--sd-ink);">{html_lib.escape(label)}{arrow}</th>'
+    return f'<th{title_attr} style="color:var(--sd-ink);">{html_lib.escape(label)}{arrow}</th>'
 
 
 @st.cache_data(ttl=300)
@@ -195,8 +194,8 @@ def render_player_table(df, team_visuals, prev_season, current_sort_col, current
         )
 
     header_cells = "".join(
-        _plain_header_html(label, df_key, current_sort_col, current_sort_ascending)
-        for label, df_key, _ in player_sort_columns(prev_season)
+        _plain_header_html(label, df_key, help_text, current_sort_col, current_sort_ascending)
+        for label, df_key, _, help_text in player_sort_columns(prev_season)
     )
 
     table_html = f"""
@@ -424,6 +423,11 @@ def main():
     with tab_players:
         st.subheader("Player / Keeper Ledger")
 
+        with st.expander("What do these columns mean?"):
+            for label, _, _, help_text in player_sort_columns(data.get("prev_season")):
+                if label and help_text:
+                    st.markdown(f"**{label}** — {help_text}")
+
         f1, f2, f3, f4, f5, f6, f7 = st.columns(7)
         with f1:
             team_filter = st.multiselect("Team", sorted(player_df["fantasy_team"].unique()))
@@ -462,7 +466,7 @@ def main():
         if total_potential_filter:
             filtered = filtered[filtered["total_potential_keeper_years"].isin(total_potential_filter)]
 
-        sort_lookup = {label: (df_key, default_asc) for label, df_key, default_asc in player_sort_columns(data.get("prev_season")) if df_key}
+        sort_lookup = {label: (df_key, default_asc) for label, df_key, default_asc, _ in player_sort_columns(data.get("prev_season")) if df_key}
         sort_choice = st.pills("Sort by", list(sort_lookup.keys()), selection_mode="single")
         reverse = st.checkbox("Reverse")
 
