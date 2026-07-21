@@ -121,7 +121,7 @@ def player_sort_columns(prev_season):
         ("Team", "nfl_team", True, "The player's real NFL team ('FA' if currently unsigned)."),
         ("Age", "age", True, "Player's current age."),
         ("Fantasy Team", "fantasy_team", True, "Which manager currently rosters this player."),
-        ("Acquired", None, None, "A condensed summary (not the full move-by-move log) of how this player reached their current manager - the event that started their keeper clock, plus each later season's final move, if any. Open the player's profile for the complete transaction history."),
+        ("Acquired", None, None, "The most recent event the current manager used to acquire or retain this player - e.g. drafted, kept, traded for, or picked up off waivers. Open the player's profile for the full transaction history."),
         ("Keeper Status", None, None, "Where this player's keeper value originated: the season/round they were drafted (or 'UDFA'), and who drafted them."),
         ("Keeper Cost", "keeper_value_round", True, "The draft round it costs to keep this player next season."),
         ("Keeper Years Remaining", "years_remaining_keepable", True, "How many more seasons this player can still be kept under the standard tenure rule (3 total seasons for drafted players, 2 for UDFAs) before they reset to the draft pool."),
