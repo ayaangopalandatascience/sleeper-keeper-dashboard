@@ -1,6 +1,5 @@
 import html as html_lib
 import re
-from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
@@ -61,11 +60,6 @@ TABLE_STYLE = """
 .sd-dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:middle; flex-shrink:0; }
 .sd-num { text-align:center; font-variant-numeric:tabular-nums; }
 .sd-team-avatar { width:20px; height:20px; border-radius:50%; object-fit:cover; vertical-align:middle; margin-right:6px; border:1px solid var(--sd-border); }
-.sd-sort-link, .sd-sort-link:visited, .sd-sort-link:hover, .sd-sort-link:active {
-  text-decoration:none !important; color:var(--sd-ink-2) !important; white-space:nowrap; cursor:pointer;
-  display:inline-block; padding:2px 4px; margin:-2px -4px; border-radius:4px;
-}
-.sd-sort-link:hover { background:var(--sd-hover); color:var(--sd-ink) !important; }
 .sd-truncate { max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sd-card { border:1px solid var(--sd-border); border-radius:10px; padding:14px 16px; margin:10px 0 18px 0; background:var(--sd-header-bg); }
 .sd-card-title { font-size:0.74rem; font-weight:700; text-transform:uppercase; letter-spacing:0.03em; color:var(--sd-ink-2); margin-bottom:8px; }
@@ -141,28 +135,11 @@ def player_sort_columns(prev_season):
     ]
 
 
-def _next_sort_state(df_key, default_ascending, current_col, current_dir):
-    default_dir = "asc" if default_ascending else "desc"
-    flipped_dir = "desc" if default_ascending else "asc"
-    if current_col != df_key:
-        return df_key, default_dir
-    if current_dir == default_dir:
-        return df_key, flipped_dir
-    return None, None
-
-
-def _sort_header_html(label, df_key, default_ascending, current_col, current_dir):
-    if df_key is None:
-        return f"<th>{label}</th>"
-    next_col, next_dir = _next_sort_state(df_key, default_ascending, current_col, current_dir)
-    params = {}
-    if next_col:
-        params = {"sort_col": next_col, "sort_dir": next_dir}
-    href = "?" + urlencode(params) if params else "?"
-    arrow = ""
-    if current_col == df_key:
-        arrow = " ▲" if current_dir == "asc" else " ▼"
-    return f'<th><a class="sd-sort-link" href="{href}" target="_self">{html_lib.escape(label)}{arrow}</a></th>'
+def _plain_header_html(label, df_key, current_sort_col, current_sort_ascending):
+    if df_key is None or df_key != current_sort_col:
+        return f"<th>{html_lib.escape(label)}</th>"
+    arrow = " ▲" if current_sort_ascending else " ▼"
+    return f'<th style="color:var(--sd-ink);">{html_lib.escape(label)}{arrow}</th>'
 
 
 @st.cache_data(ttl=300)
@@ -182,7 +159,7 @@ def _team_chip(team, team_visuals):
     return f'{img}<span class="sd-dot" style="background:{v.get("color", "#888888")};"></span>'
 
 
-def render_player_table(df, team_visuals, prev_season, current_sort_col, current_sort_dir):
+def render_player_table(df, team_visuals, prev_season, current_sort_col, current_sort_ascending):
     rows_html = []
     for _, row in df.iterrows():
         headshot = f"https://sleepercdn.com/content/nfl/players/{row['player_id']}.jpg"
@@ -218,8 +195,8 @@ def render_player_table(df, team_visuals, prev_season, current_sort_col, current
         )
 
     header_cells = "".join(
-        _sort_header_html(label, df_key, default_asc, current_sort_col, current_sort_dir)
-        for label, df_key, default_asc in player_sort_columns(prev_season)
+        _plain_header_html(label, df_key, current_sort_col, current_sort_ascending)
+        for label, df_key, _ in player_sort_columns(prev_season)
     )
 
     table_html = f"""
@@ -447,22 +424,24 @@ def main():
     with tab_players:
         st.subheader("Player / Keeper Ledger")
 
-        f1, f2, f3, f4, f5, f6 = st.columns(6)
+        f1, f2, f3, f4, f5, f6, f7 = st.columns(7)
         with f1:
             team_filter = st.multiselect("Team", sorted(player_df["fantasy_team"].unique()))
         with f2:
-            nfl_filter = st.multiselect("NFL Team", sorted(player_df["nfl_team"].dropna().unique()))
+            pos_filter = st.multiselect("Position", sorted(player_df["position"].dropna().unique()))
         with f3:
-            keeper_cost_filter = st.multiselect("Keeper Cost (Round)", sorted(player_df["keeper_value_round"].unique()))
+            nfl_filter = st.multiselect("NFL Team", sorted(player_df["nfl_team"].dropna().unique()))
         with f4:
+            keeper_cost_filter = st.multiselect("Keeper Cost (Round)", sorted(player_df["keeper_value_round"].unique()))
+        with f5:
             years_remaining_filter = st.multiselect(
                 "Keeper Years Remaining", sorted(player_df["years_remaining_keepable"].unique())
             )
-        with f5:
+        with f6:
             tags_remaining_filter = st.multiselect(
                 "Tags Remaining", sorted(player_df["tags_remaining"].unique())
             )
-        with f6:
+        with f7:
             total_potential_filter = st.multiselect(
                 "Total Potential Years", sorted(player_df["total_potential_keeper_years"].unique())
             )
@@ -470,6 +449,8 @@ def main():
         filtered = player_df.copy()
         if team_filter:
             filtered = filtered[filtered["fantasy_team"].isin(team_filter)]
+        if pos_filter:
+            filtered = filtered[filtered["position"].isin(pos_filter)]
         if nfl_filter:
             filtered = filtered[filtered["nfl_team"].isin(nfl_filter)]
         if keeper_cost_filter:
@@ -481,23 +462,24 @@ def main():
         if total_potential_filter:
             filtered = filtered[filtered["total_potential_keeper_years"].isin(total_potential_filter)]
 
-        sort_col = st.query_params.get("sort_col")
-        sort_dir = st.query_params.get("sort_dir")
-        if sort_col and sort_col in filtered.columns:
-            display_df = filtered.sort_values(
-                sort_col, ascending=(sort_dir == "asc"), na_position="last"
-            ).reset_index(drop=True)
-        else:
-            sort_col, sort_dir = None, None
-            display_df = filtered.sort_values(
-                ["fantasy_team", "keeper_value_round"]
-            ).reset_index(drop=True)
+        sort_lookup = {label: (df_key, default_asc) for label, df_key, default_asc in player_sort_columns(data.get("prev_season")) if df_key}
+        sort_col1, sort_col2 = st.columns([5, 1])
+        with sort_col1:
+            sort_choice = st.pills("Sort by", list(sort_lookup.keys()), selection_mode="single")
+        with sort_col2:
+            st.write("")
+            reverse = st.checkbox("Reverse")
 
-        st.caption(
-            "Click a column header to sort by it, click again to reverse, a third time to reset. "
-            "Click a player's name to see their headshot, keeper metrics, and transaction history."
-        )
-        render_player_table(display_df, team_visuals, data.get("prev_season"), sort_col, sort_dir)
+        if sort_choice:
+            sort_key, default_asc = sort_lookup[sort_choice]
+            sort_ascending = (not default_asc) if reverse else default_asc
+            display_df = filtered.sort_values(sort_key, ascending=sort_ascending, na_position="last").reset_index(drop=True)
+        else:
+            sort_key, sort_ascending = None, True
+            display_df = filtered.sort_values(["fantasy_team", "keeper_value_round"]).reset_index(drop=True)
+
+        st.caption("Click a player's name to see their headshot, keeper metrics, and transaction history.")
+        render_player_table(display_df, team_visuals, data.get("prev_season"), sort_key, sort_ascending)
 
         pid = st.query_params.get("player_id")
         if pid:
