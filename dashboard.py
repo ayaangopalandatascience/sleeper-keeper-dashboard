@@ -405,11 +405,22 @@ def show_player_dialog(data, row):
 
 
 def main():
-    st.title("🏈 Bag n Butthole — Keeper Dashboard")
+    st.markdown(
+        """<style>
+        [data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none; }
+        #MainMenu, footer { visibility: hidden; }
+        </style>""",
+        unsafe_allow_html=True,
+    )
 
-    if st.sidebar.button("Refresh from Sleeper"):
-        load_data.clear()
-        load_team_visuals.clear()
+    title_col, refresh_col = st.columns([5, 1])
+    with title_col:
+        st.title("🏈 Bag n Butthole — Keeper Dashboard")
+    with refresh_col:
+        st.write("")
+        if st.button("Refresh from Sleeper"):
+            load_data.clear()
+            load_team_visuals.clear()
 
     data = load_data(CURRENT_LEAGUE_ID)
     overrides = ledger.load_overrides()
@@ -419,12 +430,14 @@ def main():
     team_visuals = load_team_visuals(CURRENT_LEAGUE_ID)
 
     current_league = data["league_chain"][-1]
-    st.sidebar.markdown(f"**League:** {current_league['name']}")
-    st.sidebar.markdown(f"**Season:** {current_league['season']} ({current_league['status']})")
-    st.sidebar.markdown(f"**Seasons of history loaded:** {len(data['league_chain'])}")
+    st.caption(
+        f"**League:** {current_league['name']}  |  "
+        f"**Season:** {current_league['season']} ({current_league['status']})  |  "
+        f"**Seasons of history loaded:** {len(data['league_chain'])}"
+    )
 
     if unmatched_overrides:
-        st.sidebar.warning(
+        st.warning(
             "overrides.yaml has names that don't match any current player:\n"
             + "\n".join(f"- {n}" for n in unmatched_overrides)
         )
