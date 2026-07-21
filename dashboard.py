@@ -456,7 +456,7 @@ def main():
             keeper_cost_filter = st.multiselect("Keeper Cost (Round)", sorted(player_df["keeper_value_round"].unique()))
         with f4:
             years_remaining_filter = st.multiselect(
-                "Years Remaining", sorted(player_df["years_remaining_keepable"].unique())
+                "Keeper Years Remaining", sorted(player_df["years_remaining_keepable"].unique())
             )
         with f5:
             tags_remaining_filter = st.multiselect(
