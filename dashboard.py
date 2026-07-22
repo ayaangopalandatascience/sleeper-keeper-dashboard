@@ -278,16 +278,17 @@ def render_draft_board_grid(board_df, pick_txn_df, team_visuals, highlight_team=
                 body_cells.append('<div class="db-cell db-blackout"></div>')
                 continue
 
-            # The trade log only knows about real Sleeper trades - if the pick
-            # was also manually reassigned since (e.g. for a snake conversion),
-            # the chain built from trades alone stops short of the true owner.
-            # Append that final hop so the chain always ends where the pick
-            # actually is, labeling it distinctly since it isn't a logged trade.
+            # The trade log only knows about real Sleeper trades. If a manual
+            # reassignment (e.g. a snake conversion) happened since the last
+            # logged trade, the trade-only chain would end somewhere other
+            # than the pick's true current owner - showing it would be an
+            # arrow pointing at the wrong team. A reassignment isn't a trade,
+            # so instead of guessing where to splice it in, treat it as a
+            # reset: no chain shown at all, the reassigned owner is just
+            # displayed as if it were their pick from the start.
             chain = ledger.get_pick_chain(pick_txn_df, season, int(rnd), team)
-            if chain[-1] != r["owned_by"]:
-                chain = chain + [f"{r['owned_by']} (reassigned)"]
             chain_html = ""
-            if len(chain) > 1:
+            if len(chain) > 1 and chain[-1] == r["owned_by"]:
                 arrow_chain = " → ".join(html_lib.escape(str(c)) for c in chain)
                 chain_html = f'<div class="db-chain">{arrow_chain}</div>'
             cell_class = "db-cell db-traded" if r["traded"] else "db-cell"
