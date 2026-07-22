@@ -278,7 +278,14 @@ def render_draft_board_grid(board_df, pick_txn_df, team_visuals, highlight_team=
                 body_cells.append('<div class="db-cell db-blackout"></div>')
                 continue
 
+            # The trade log only knows about real Sleeper trades - if the pick
+            # was also manually reassigned since (e.g. for a snake conversion),
+            # the chain built from trades alone stops short of the true owner.
+            # Append that final hop so the chain always ends where the pick
+            # actually is, labeling it distinctly since it isn't a logged trade.
             chain = ledger.get_pick_chain(pick_txn_df, season, int(rnd), team)
+            if chain[-1] != r["owned_by"]:
+                chain = chain + [f"{r['owned_by']} (reassigned)"]
             chain_html = ""
             if len(chain) > 1:
                 arrow_chain = " → ".join(html_lib.escape(str(c)) for c in chain)
