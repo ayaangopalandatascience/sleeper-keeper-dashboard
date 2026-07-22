@@ -373,7 +373,24 @@ def build_draft_pick_ledger(data, overrides=None, rounds_per_season=14, future_s
                     "current_roster_id": rid,
                 }
 
+    # For the current season, rounds after the snake pivot are a special
+    # case: this league manually reassigns pick custody round-by-round so a
+    # structurally "linear" Sleeper draft behaves like a snake at the table.
+    # That custody field is being used for live-draft turn coordination, not
+    # keeper accounting - it is NOT a reliable source of "who should be
+    # credited with this pick." So for that zone, traded_picks is ignored
+    # entirely, and ownership is instead computed purely from identity (the
+    # pick stays with its own team) modified only by real trades pulled
+    # straight from the permanent transaction log, which never gets
+    # overwritten by reassignments the way traded_picks does. Rounds at or
+    # before the pivot, and every other season, still use traded_picks
+    # directly - there's no conflict there.
+    def _in_snake_zone(season, round_):
+        return season == ordered_season and round_ > SNAKE_AFTER_ROUND
+
     for tp in data["traded_picks"]:
+        if _in_snake_zone(tp["season"], tp["round"]):
+            continue
         key = (tp["season"], tp["round"], tp["roster_id"])
         if key in picks:
             picks[key]["current_roster_id"] = tp["owner_id"]
@@ -385,10 +402,28 @@ def build_draft_pick_ledger(data, overrides=None, rounds_per_season=14, future_s
                 "current_roster_id": tp["owner_id"],
             }
 
-    # Manual overrides win over whatever Sleeper's live traded_picks says -
-    # needed when a manual reassignment and a real trade both touch the same
-    # pick, since Sleeper's data model can only hold one custody value and
-    # one of the two always ends up overwritten no matter the order.
+    real_trades = sorted(
+        (t for t in data.get("transactions", []) if t.get("type") == "trade"),
+        key=lambda t: t.get("created") or 0,
+    )
+    for t in real_trades:
+        for dp in t.get("draft_picks") or []:
+            if not _in_snake_zone(dp["season"], dp["round"]):
+                continue
+            key = (dp["season"], dp["round"], dp["roster_id"])
+            if key in picks:
+                picks[key]["current_roster_id"] = dp["owner_id"]
+            else:
+                picks[key] = {
+                    "season": dp["season"],
+                    "round": dp["round"],
+                    "original_roster_id": dp["roster_id"],
+                    "current_roster_id": dp["owner_id"],
+                }
+
+    # Manual overrides remain available as a last-resort escape hatch for
+    # anything the automatic logic above doesn't anticipate, but shouldn't be
+    # needed for the ordinary snake-zone trade case anymore.
     unmatched_pick_overrides = []
     for override in overrides.get("picks", []):
         original_rid = label_to_roster_id.get(override.get("original_team"))
