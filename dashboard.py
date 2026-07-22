@@ -238,20 +238,28 @@ def render_pick_board_table(df, team_visuals):
 
 
 def render_draft_board_grid(board_df, pick_txn_df, team_visuals, highlight_team=None):
-    """A squared, N-column draft board. Columns are plain pick-position labels
-    (not team identities) since a manual mid-draft snake conversion would make
-    a fixed column->team header wrong for later rounds. Each cell shows the
-    current owner's avatar and, if traded, the full custody chain. When
-    highlight_team is set, every cell not currently owned by that team is
-    blacked out so only their picks stand out."""
+    """The draft board in TRUE draft order, exactly as Sleeper will run it.
+
+    Columns are pick positions (1..N = the order picks are actually made
+    within a round), so cells are placed by ``pick_in_round`` — which already
+    bakes in this league's linear-rounds-1-6-then-snake convention. Reading a
+    row left-to-right is the real pick sequence, and the owner in each cell is
+    the same owner Sleeper's board shows (the end state matches Sleeper).
+
+    Each cell's primary line is the *current* owner (who actually picks there).
+    A pick's snake-initial owner is whichever team natively lands on that
+    position; when the pick has since been traded away from that team, the cell
+    is tinted and shows the custody chain (initial owner → … → current owner),
+    sourced from the permanent trade log rather than Sleeper's traded_picks
+    (which the manual snake reassignment overwrites). When highlight_team is
+    set, every cell not currently owned by that team is blacked out."""
     if board_df["pick_display"].isna().all():
         st.caption("No draft order set yet for this season — showing a simple list instead.")
         render_pick_board_table(board_df, team_visuals)
         return
 
     season = str(board_df["season"].iloc[0])
-    first_round = board_df["round"].min()
-    columns = board_df[board_df["round"] == first_round].sort_values("pick_in_round")["original_team"].tolist()
+    positions = sorted(int(p) for p in board_df["pick_in_round"].dropna().unique())
     rounds = sorted(board_df["round"].unique())
 
     def team_chip(team, avatar_size=22):
@@ -261,45 +269,47 @@ def render_draft_board_grid(board_df, pick_txn_df, team_visuals, highlight_team=
         return f'<div style="display:flex;align-items:center;">{img}<span style="font-size:0.72rem;color:var(--sd-ink);">{html_lib.escape(str(team))}</span></div>'
 
     header_cells = ['<div class="db-cell db-corner"></div>']
-    for i in range(1, len(columns) + 1):
-        header_cells.append(f'<div class="db-cell db-header">Pick {i}</div>')
+    for p in positions:
+        header_cells.append(f'<div class="db-cell db-header">Pick {p}</div>')
 
     body_cells = []
     for rnd in rounds:
         body_cells.append(f'<div class="db-cell db-round-label">R{rnd}</div>')
-        for team in columns:
-            cell_rows = board_df[(board_df["round"] == rnd) & (board_df["original_team"] == team)]
+        round_rows = board_df[board_df["round"] == rnd]
+        for pos in positions:
+            cell_rows = round_rows[round_rows["pick_in_round"] == pos]
             if cell_rows.empty:
                 body_cells.append('<div class="db-cell db-empty"></div>')
                 continue
             r = cell_rows.iloc[0]
+            owner = r["owned_by"]
+            initial_team = r["original_team"]  # snake-native owner of this position
 
-            if highlight_team and r["owned_by"] != highlight_team:
+            if highlight_team and owner != highlight_team:
                 body_cells.append('<div class="db-cell db-blackout"></div>')
                 continue
 
-            # The trade log only knows about real Sleeper trades. If a manual
-            # reassignment (e.g. a snake conversion) happened since the last
-            # logged trade, the trade-only chain would end somewhere other
-            # than the pick's true current owner. A reassignment isn't a
-            # trade, so instead of guessing where to splice it in, treat it
-            # as a reset: no highlight, no chain, the reassigned owner is
-            # just displayed as if it were their pick from the start. Only a
-            # chain that fully and correctly explains the current owner (i.e.
-            # nothing but real trades happened) gets the traded treatment.
-            chain = ledger.get_pick_chain(pick_txn_df, season, int(rnd), team)
-            explained_by_trade = len(chain) > 1 and chain[-1] == r["owned_by"]
+            # A pick sits under its true draft position, so its snake-initial
+            # owner is this position's native team. If the current owner isn't
+            # that team, it changed hands via a real trade — reconstruct the
+            # custody chain from the permanent trade log (keyed by the initial
+            # team, since that's whose pick was traded). The snake conversion
+            # itself is never a trade and so never appears in this chain.
+            traded = owner != initial_team
             chain_html = ""
-            if explained_by_trade:
+            if traded:
+                chain = ledger.get_pick_chain(pick_txn_df, season, int(rnd), initial_team)
+                if len(chain) < 2 or chain[-1] != owner:
+                    chain = [initial_team, owner]  # fall back to a direct initial→owner hop
                 arrow_chain = " → ".join(html_lib.escape(str(c)) for c in chain)
                 chain_html = f'<div class="db-chain">{arrow_chain}</div>'
-            cell_class = "db-cell db-traded" if explained_by_trade else "db-cell"
-            body_cells.append(f'<div class="{cell_class}">{team_chip(r["owned_by"])}{chain_html}</div>')
+            cell_class = "db-cell db-traded" if traded else "db-cell"
+            body_cells.append(f'<div class="{cell_class}">{team_chip(owner)}{chain_html}</div>')
 
     grid_html = f"""
     {TABLE_STYLE}
     <style>
-    .db-grid {{ display:grid; grid-template-columns: 46px repeat({len(columns)}, minmax(96px,1fr)); gap:6px; margin-top:10px; }}
+    .db-grid {{ display:grid; grid-template-columns: 46px repeat({len(positions)}, minmax(96px,1fr)); gap:6px; margin-top:10px; }}
     .db-cell {{ border:1px solid var(--sd-border); border-radius:8px; padding:7px 8px;
       min-height:52px; display:flex; flex-direction:column; justify-content:center; background:var(--sd-header-bg); }}
     .db-header {{ font-weight:700; font-size:0.72rem; justify-content:center; align-items:center;
@@ -433,6 +443,17 @@ def main():
             + "\n".join(f"- {o}" for o in unmatched_pick_overrides)
         )
 
+    board_mismatches = ledger.reconcile_board_against_sleeper(data, pick_df)
+    if board_mismatches:
+        st.error(
+            "⚠️ The reconstructed draft board does not match Sleeper's actual pick "
+            "ownership for the picks below. This usually means a pick changed hands "
+            "outside a normal Sleeper trade (e.g. a manual reassignment) or a pick "
+            "trade fell outside the loaded history. Investigate before trusting the "
+            "board — or record the true owner in overrides.yaml:\n"
+            + "\n".join(f"- {m}" for m in board_mismatches)
+        )
+
     tab_players, tab_picks, tab_rules = st.tabs(["Player / Keeper Ledger", "Draft Picks", "League Rules"])
 
     with tab_players:
@@ -513,6 +534,12 @@ def main():
         highlight_team = None if highlight_choice == "(All teams)" else highlight_choice
 
         st.markdown("**Full pick board (draft order)**")
+        st.caption(
+            "Rounds 1–6 run linear (pick order 1→10); rounds 7+ snake (order reverses each round). "
+            "Columns are the real pick positions, so each row reads left-to-right in the exact order "
+            "picks are made — and every cell's owner matches Sleeper's board. Tinted cells were traded "
+            "away from the team that natively holds that position; the chain shows initial owner → current owner."
+        )
         board = season_picks.copy()
         board["source"] = board.apply(
             lambda r: "Own pick" if not r["traded"] else f"Via trade, from {r['original_team']}", axis=1

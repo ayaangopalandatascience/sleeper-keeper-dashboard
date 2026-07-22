@@ -74,13 +74,16 @@ def load_all_data(current_league_id):
     players = sleeper_api.get_all_players()
     current_draft = drafts_by_season.get(current_league["season"])
 
-    # Transactions explain how a player landed on their *current* roster. The
-    # current league's rosters mirror the end state of the most recently
-    # completed season (Sleeper carries rosters forward before the new
-    # season's draft happens), so pull both in case the new league has
-    # already accumulated moves of its own.
+    # Transactions serve two purposes: explaining how a player landed on their
+    # current roster, and (critically) recovering real draft-pick trades that a
+    # manual snake reassignment overwrote in traded_picks. A future-season pick
+    # can be traded seasons in advance, so scan every league in the chain rather
+    # than just the last couple - otherwise an old pick trade would silently
+    # drop out of the snake-zone reconstruction once it aged past the window.
+    # Results are cached, and older adds never override newer ones in the
+    # player-acquisition logic, so the wider scan is safe there too.
     transactions = []
-    for league in league_chain[-2:]:
+    for league in league_chain:
         txns = sleeper_api.get_all_transactions(league["league_id"])
         for t in txns:
             t["season"] = league["season"]
@@ -194,18 +197,30 @@ def _format_pick(season, round_, pick_no, season_team_count):
     return f"{round_}.{pick_in_round:02d}"
 
 
-# This league's draft is set up as "linear" in Sleeper's own settings, but the
-# commissioner manually reassigns pick custody round-by-round to make rounds
-# after this one behave like a snake (Sleeper has no native way to switch
-# formats partway through a draft). Sleeper's draft_type flag never reflects
-# this, so column placement has to apply the same rule ourselves rather than
-# trusting draft_type - otherwise every pick renders under its fixed linear
-# slot instead of where the snake convention actually puts it.
-SNAKE_AFTER_ROUND = 6
+# Per-season snake conversion. Sleeper can't run a linear-then-snake draft, so
+# the commissioner sets the draft to "linear" and manually reassigns pick
+# custody to fake a snake after a given round (the last pick of that round picks
+# again first in the next round). Map each affected season to its last linear
+# round. A season not listed here is treated exactly as Sleeper reports it (no
+# conversion, position == slot every round). This is intentionally hardcoded
+# per season: if a future year changes the format, add or edit its entry here -
+# the convention is never assumed to carry forward on its own. Sleeper's
+# draft_type flag always says "linear" and never reflects the manual snake, so
+# pick placement must apply this rule itself rather than trusting draft_type.
+SNAKE_AFTER_ROUND_BY_SEASON = {
+    "2026": 6,
+}
 
 
-def _effective_pick_in_round(slot, round_, num_teams, snake_after_round=SNAKE_AFTER_ROUND):
-    if round_ <= snake_after_round:
+def _snake_after_round(season):
+    return SNAKE_AFTER_ROUND_BY_SEASON.get(str(season))
+
+
+def _effective_pick_in_round(slot, round_, num_teams, snake_after_round):
+    """Physical pick position of a draft slot in a given round under this
+    league's snake convention. snake_after_round is None for seasons with no
+    conversion (pure linear - position always equals slot)."""
+    if snake_after_round is None or round_ <= snake_after_round:
         return slot
     rounds_after_pivot = round_ - snake_after_round
     if rounds_after_pivot % 2 == 1:
@@ -386,7 +401,8 @@ def build_draft_pick_ledger(data, overrides=None, rounds_per_season=14, future_s
     # before the pivot, and every other season, still use traded_picks
     # directly - there's no conflict there.
     def _in_snake_zone(season, round_):
-        return season == ordered_season and round_ > SNAKE_AFTER_ROUND
+        sar = _snake_after_round(season)
+        return season == ordered_season and sar is not None and round_ > sar
 
     for tp in data["traded_picks"]:
         if _in_snake_zone(tp["season"], tp["round"]):
@@ -447,7 +463,8 @@ def build_draft_pick_ledger(data, overrides=None, rounds_per_season=14, future_s
         pick_in_round = None
         if p["season"] == ordered_season and p["original_roster_id"] in roster_to_slot:
             pick_in_round = _effective_pick_in_round(
-                roster_to_slot[p["original_roster_id"]], p["round"], num_teams
+                roster_to_slot[p["original_roster_id"]], p["round"], num_teams,
+                _snake_after_round(p["season"]),
             )
 
         rows.append(
@@ -468,6 +485,65 @@ def build_draft_pick_ledger(data, overrides=None, rounds_per_season=14, future_s
         .reset_index(drop=True)
     )
     return df, unmatched_pick_overrides
+
+
+def reconcile_board_against_sleeper(data, pick_df):
+    """Live guardrail: independently derive Sleeper's real draft-board owner for
+    every cell of the current (ordered) season straight from traded_picks +
+    slot_to_roster_id, and compare it to our reconstructed board. Returns a list
+    of human-readable mismatch strings - empty means the reconstruction exactly
+    matches what Sleeper will actually draft.
+
+    The reconstruction (identity + snake display + trade-log recovery) and this
+    check (Sleeper's own live custody) come from fully independent sources, so a
+    match is strong evidence both are right. A mismatch means the board drifted
+    from reality - e.g. a pick reassigned outside a normal Sleeper trade, or a
+    pick trade that fell outside the loaded transaction history - and should be
+    investigated before the board is trusted, rather than shown silently wrong.
+
+    Sleeper runs a structurally linear draft, so a pick physically sits in its
+    original roster's slot column; traded_picks (which folds in both the manual
+    snake reassignment and any trades the commissioner mirrored back into it)
+    gives that cell's true owner. Our board places the same pick at its snake
+    position, but the owner reading down column c must still agree cell-for-cell,
+    which is exactly what this compares."""
+    team_labels = _team_labels(data["rosters"], data["users"])
+    draft = data.get("current_draft") or {}
+    slot_to_roster = {int(s): rid for s, rid in (draft.get("slot_to_roster_id") or {}).items()}
+    if not slot_to_roster:
+        return []
+    roster_to_slot = {rid: s for s, rid in slot_to_roster.items()}
+    season = str(data["league_chain"][-1]["season"])
+    num_teams = len(data["rosters"]) or 10
+
+    season_picks = pick_df[pick_df["season"] == season]
+    rounds = sorted({int(r) for r in season_picks["round"].unique()})
+
+    sleeper_owner = {}
+    for rnd in rounds:
+        for col in range(1, num_teams + 1):
+            sleeper_owner[(rnd, col)] = slot_to_roster.get(col)
+    for tp in data["traded_picks"]:
+        if str(tp["season"]) != season:
+            continue
+        col = roster_to_slot.get(tp["roster_id"])
+        if col is not None:
+            sleeper_owner[(tp["round"], col)] = tp["owner_id"]
+
+    label_to_roster = {label: rid for rid, label in team_labels.items()}
+    mismatches = []
+    for _, row in season_picks.iterrows():
+        if pd.isna(row["pick_in_round"]):
+            continue
+        rnd, col = int(row["round"]), int(row["pick_in_round"])
+        ours = label_to_roster.get(row["current_owner_team"])
+        theirs = sleeper_owner.get((rnd, col))
+        if ours != theirs:
+            mismatches.append(
+                f"R{rnd} Pick {col}: dashboard shows {team_labels.get(ours, ours)}, "
+                f"Sleeper shows {team_labels.get(theirs, theirs)}"
+            )
+    return sorted(mismatches)
 
 
 def get_pick_transaction_log(data):
