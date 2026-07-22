@@ -193,9 +193,21 @@ def _format_pick(season, round_, pick_no, season_team_count):
     return f"{round_}.{pick_in_round:02d}"
 
 
-def _slot_pick_in_round(slot, round_, draft_type, num_teams):
-    """Where in the round a given draft slot picks. Snake drafts reverse on even rounds."""
-    if draft_type == "snake" and round_ % 2 == 0:
+# This league's draft is set up as "linear" in Sleeper's own settings, but the
+# commissioner manually reassigns pick custody round-by-round to make rounds
+# after this one behave like a snake (Sleeper has no native way to switch
+# formats partway through a draft). Sleeper's draft_type flag never reflects
+# this, so column placement has to apply the same rule ourselves rather than
+# trusting draft_type - otherwise every pick renders under its fixed linear
+# slot instead of where the snake convention actually puts it.
+SNAKE_AFTER_ROUND = 6
+
+
+def _effective_pick_in_round(slot, round_, num_teams, snake_after_round=SNAKE_AFTER_ROUND):
+    if round_ <= snake_after_round:
+        return slot
+    rounds_after_pivot = round_ - snake_after_round
+    if rounds_after_pivot % 2 == 1:
         return num_teams - slot + 1
     return slot
 
@@ -342,7 +354,6 @@ def build_draft_pick_ledger(data, rounds_per_season=14, future_seasons=2):
     current_draft = data.get("current_draft") or {}
     slot_to_roster = {int(slot): rid for slot, rid in (current_draft.get("slot_to_roster_id") or {}).items()}
     roster_to_slot = {rid: slot for slot, rid in slot_to_roster.items()}
-    draft_type = current_draft.get("type")
     num_teams = len(roster_ids) or 10
     ordered_season = str(current_season) if roster_to_slot else None
 
@@ -375,8 +386,8 @@ def build_draft_pick_ledger(data, rounds_per_season=14, future_seasons=2):
     for p in picks.values():
         pick_in_round = None
         if p["season"] == ordered_season and p["original_roster_id"] in roster_to_slot:
-            pick_in_round = _slot_pick_in_round(
-                roster_to_slot[p["original_roster_id"]], p["round"], draft_type, num_teams
+            pick_in_round = _effective_pick_in_round(
+                roster_to_slot[p["original_roster_id"]], p["round"], num_teams
             )
 
         rows.append(
