@@ -340,11 +340,17 @@ def render_past_draft_grid(board_df, team_visuals):
     positions = sorted(int(p) for p in board_df["pick_in_round"].dropna().unique())
     rounds = sorted(board_df["round"].unique())
 
-    def team_chip(team, avatar_size=18):
+    def mgr_chip(team, avatar_size=16):
         v = team_visuals.get(team, {})
         avatar = v.get("avatar_url")
-        img = f'<img src="{avatar}" style="width:{avatar_size}px;height:{avatar_size}px;border-radius:50%;object-fit:cover;margin-right:5px;border:1px solid var(--sd-border);">' if avatar else ""
-        return f'<div style="display:flex;align-items:center;margin-top:5px;">{img}<span style="font-size:0.66rem;color:var(--sd-ink-2);">{html_lib.escape(str(team))}</span></div>'
+        img = f'<img src="{avatar}" style="width:{avatar_size}px;height:{avatar_size}px;border-radius:50%;object-fit:cover;margin-right:5px;border:1px solid var(--sd-border);flex-shrink:0;">' if avatar else ""
+        return f'<div class="pd-mgr">{img}<span class="sd-truncate">{html_lib.escape(str(team))}</span></div>'
+
+    def nfl_logo(team_abbr):
+        if not team_abbr or str(team_abbr).upper() in ("FA", "NAN"):
+            return ""
+        url = f"https://sleepercdn.com/images/team_logos/nfl/{str(team_abbr).lower()}.png"
+        return f'<span class="pd-logo-wrap"><img class="pd-logo" src="{url}" onerror="this.parentNode.style.display=\'none\'"></span>'
 
     header_cells = ['<div class="db-cell db-corner"></div>']
     for p in positions:
@@ -362,20 +368,24 @@ def render_past_draft_grid(board_df, team_visuals):
             r = cell_rows.iloc[0]
             name = html_lib.escape(str(r["player_name"]))
             meta_bits = [str(r[c]) for c in ("position", "nfl_team") if pd.notna(r[c]) and r[c]]
-            meta_line = f'<div class="pd-meta">{html_lib.escape(" · ".join(meta_bits))}</div>' if meta_bits else ""
+            meta_text = html_lib.escape(" · ".join(meta_bits))
+            meta_line = (
+                f'<div class="pd-meta">{nfl_logo(r["nfl_team"])}<span>{meta_text}</span></div>'
+                if meta_bits else ""
+            )
             keeper_badge = '<span class="pd-keeper">KEPT</span>' if r["is_keeper"] else ""
             cell_class = "db-cell db-traded" if r["is_keeper"] else "db-cell"
             body_cells.append(
                 f'<div class="{cell_class}"><div class="pd-name">{name}{keeper_badge}</div>'
-                f'{meta_line}{team_chip(r["team"])}</div>'
+                f'{meta_line}{mgr_chip(r["team"])}</div>'
             )
 
     grid_html = f"""
     {TABLE_STYLE}
     <style>
     .db-grid {{ display:grid; grid-template-columns: 46px repeat({len(positions)}, minmax(120px,1fr)); gap:6px; margin-top:10px; }}
-    .db-cell {{ border:1px solid var(--sd-border); border-radius:8px; padding:7px 8px;
-      min-height:62px; display:flex; flex-direction:column; justify-content:center; background:var(--sd-header-bg); }}
+    .db-cell {{ border:1px solid var(--sd-border); border-radius:8px; padding:7px 9px;
+      min-height:78px; display:flex; flex-direction:column; justify-content:center; background:var(--sd-header-bg); }}
     .db-header {{ font-weight:700; font-size:0.72rem; justify-content:center; align-items:center;
       color:var(--sd-ink-muted); text-transform:uppercase; letter-spacing:0.03em; background:transparent; border:none; }}
     .db-round-label {{ border:none; background:transparent; font-weight:700; align-items:center; font-size:0.8rem; color:var(--sd-ink-2); }}
@@ -383,7 +393,12 @@ def render_past_draft_grid(board_df, team_visuals):
     .db-traded {{ background:var(--sd-amber-wash); }}
     .db-empty {{ opacity:0.25; background:transparent; }}
     .pd-name {{ font-size:0.78rem; font-weight:600; color:var(--sd-ink); line-height:1.2; }}
-    .pd-meta {{ font-size:0.65rem; color:var(--sd-ink-muted); margin-top:2px; }}
+    .pd-meta {{ display:flex; align-items:center; gap:5px; font-size:0.65rem; color:var(--sd-ink-muted); margin-top:3px; }}
+    .pd-logo-wrap {{ display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px;
+      border-radius:50%; background:rgba(255,255,255,0.9); border:1px solid var(--sd-border); flex-shrink:0; }}
+    .pd-logo {{ width:15px; height:15px; object-fit:contain; display:block; }}
+    .pd-mgr {{ display:flex; align-items:center; margin-top:6px; padding-top:6px;
+      border-top:1px solid var(--sd-hairline); font-size:0.66rem; color:var(--sd-ink-2); }}
     .pd-keeper {{ font-size:0.55rem; font-weight:700; color:var(--sd-yellow); margin-left:5px; vertical-align:middle; letter-spacing:0.04em; }}
     </style>
     <div class="sd-table-wrap">

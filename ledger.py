@@ -638,9 +638,15 @@ def build_past_draft_board(data, season):
     for pick in data.get("picks_by_season", {}).get(season, []):
         pid = pick.get("player_id")
         meta = players_meta.get(pid, {}) if pid else {}
+        # Sleeper stamps each pick with a metadata snapshot taken at draft time,
+        # so metadata.team is the player's NFL team *that* preseason (verified:
+        # players later traded show their draft-season team here, not today's).
+        # That's what we want on a historical board - fall back to current meta
+        # only if a pick somehow lacks the snapshot.
+        pmeta = pick.get("metadata") or {}
         name = (
             meta.get("full_name")
-            or f"{meta.get('first_name', '')} {meta.get('last_name', '')}".strip()
+            or f"{pmeta.get('first_name', '')} {pmeta.get('last_name', '')}".strip()
             or (pid or "—")
         )
         pick_no = pick.get("pick_no")
@@ -654,8 +660,8 @@ def build_past_draft_board(data, season):
                 "pick_display": _format_pick(season, pick["round"], pick_no, season_team_count),
                 "player_id": pid,
                 "player_name": name,
-                "position": meta.get("position"),
-                "nfl_team": meta.get("team"),
+                "position": pmeta.get("position") or meta.get("position"),
+                "nfl_team": pmeta.get("team") or meta.get("team"),
                 "team": team_labels.get(pick.get("roster_id"), pick.get("roster_id")),
                 "is_keeper": bool(pick.get("is_keeper")),
             }
