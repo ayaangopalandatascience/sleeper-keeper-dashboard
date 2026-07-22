@@ -411,7 +411,7 @@ def main():
     data = load_data(CURRENT_LEAGUE_ID)
     overrides = ledger.load_overrides()
     player_df, unmatched_overrides = ledger.build_player_ledger(data, overrides)
-    pick_df = ledger.build_draft_pick_ledger(data)
+    pick_df, unmatched_pick_overrides = ledger.build_draft_pick_ledger(data, overrides)
     pick_txn_df = ledger.get_pick_transaction_log(data)
     team_visuals = load_team_visuals(CURRENT_LEAGUE_ID)
 
@@ -424,8 +424,13 @@ def main():
 
     if unmatched_overrides:
         st.warning(
-            "overrides.yaml has names that don't match any current player:\n"
+            "overrides.yaml has player names that don't match any current player:\n"
             + "\n".join(f"- {n}" for n in unmatched_overrides)
+        )
+    if unmatched_pick_overrides:
+        st.warning(
+            "overrides.yaml has pick overrides with team names that don't match:\n"
+            + "\n".join(f"- {o}" for o in unmatched_pick_overrides)
         )
 
     tab_players, tab_picks, tab_rules = st.tabs(["Player / Keeper Ledger", "Draft Picks", "League Rules"])

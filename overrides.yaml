@@ -1,8 +1,28 @@
-# Manual overlay for things Sleeper's API has no concept of: franchise tags.
-# Key each player by their exact Sleeper display name (as shown on the dashboard).
+# Manual overlay for things Sleeper's API can't represent on its own.
+#
+# players: franchise tags. Key each player by their exact Sleeper display name
+# (as shown on the dashboard).
 #
 # players:
 #   "Ja'Marr Chase":
 #     franchise_tag_years_used: 1   # 0 = not tagged, 1 = in year 1 of tag, 2 = in year 2 (max)
+#
+# picks: manual pick ownership. Sleeper's traded_picks only holds one custody
+# value per pick, but a manually-reassigned (e.g. snake-conversion) pick and a
+# real trade on that same pick can't both be represented there at once - one
+# always overwrites the other no matter what order you do things in. Use this
+# to declare the true current owner directly when that happens; it wins over
+# whatever Sleeper's live data says for that exact (season, round, team) pick.
+#
+# picks:
+#   - season: "2026"
+#     round: 13
+#     original_team: "Rice Cock"   # whose pick this is, by the real trade's own record
+#     owner_team: "What did I miss? OVO"
 
 players: {}
+picks:
+  - season: "2026"
+    round: 13
+    original_team: "Rice Cock"
+    owner_team: "What did I miss? OVO"

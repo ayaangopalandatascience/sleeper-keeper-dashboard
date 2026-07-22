@@ -46,9 +46,10 @@ OVERRIDES_PATH = Path(__file__).parent / "overrides.yaml"
 def load_overrides(path=OVERRIDES_PATH):
     path = Path(path)
     if not path.exists():
-        return {"players": {}}
+        return {"players": {}, "picks": []}
     data = yaml.safe_load(path.read_text()) or {}
     data.setdefault("players", {})
+    data.setdefault("picks", [])
     return data
 
 
@@ -342,9 +343,11 @@ def build_player_ledger(data, overrides=None):
     return df, unmatched_overrides
 
 
-def build_draft_pick_ledger(data, rounds_per_season=14, future_seasons=2):
+def build_draft_pick_ledger(data, overrides=None, rounds_per_season=14, future_seasons=2):
+    overrides = overrides or {"picks": []}
     rosters = data["rosters"]
     team_labels = _team_labels(rosters, data["users"])
+    label_to_roster_id = {label: rid for rid, label in team_labels.items()}
     roster_ids = [r["roster_id"] for r in rosters]
     current_season = int(data["league_chain"][-1]["season"])
 
@@ -382,6 +385,28 @@ def build_draft_pick_ledger(data, rounds_per_season=14, future_seasons=2):
                 "current_roster_id": tp["owner_id"],
             }
 
+    # Manual overrides win over whatever Sleeper's live traded_picks says -
+    # needed when a manual reassignment and a real trade both touch the same
+    # pick, since Sleeper's data model can only hold one custody value and
+    # one of the two always ends up overwritten no matter the order.
+    unmatched_pick_overrides = []
+    for override in overrides.get("picks", []):
+        original_rid = label_to_roster_id.get(override.get("original_team"))
+        owner_rid = label_to_roster_id.get(override.get("owner_team"))
+        if original_rid is None or owner_rid is None:
+            unmatched_pick_overrides.append(override)
+            continue
+        key = (str(override["season"]), int(override["round"]), original_rid)
+        if key in picks:
+            picks[key]["current_roster_id"] = owner_rid
+        else:
+            picks[key] = {
+                "season": key[0],
+                "round": key[1],
+                "original_roster_id": original_rid,
+                "current_roster_id": owner_rid,
+            }
+
     rows = []
     for p in picks.values():
         pick_in_round = None
@@ -402,11 +427,12 @@ def build_draft_pick_ledger(data, rounds_per_season=14, future_seasons=2):
             }
         )
 
-    return (
+    df = (
         pd.DataFrame(rows)
         .sort_values(["season", "round", "pick_in_round", "current_owner_team"])
         .reset_index(drop=True)
     )
+    return df, unmatched_pick_overrides
 
 
 def get_pick_transaction_log(data):
