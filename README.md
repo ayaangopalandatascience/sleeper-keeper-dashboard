@@ -17,14 +17,18 @@ all in one place.
   and complete transaction history (draft → trades/waivers → keeper picks), most recent first
 
 **Draft Picks**
-- A real draft-order grid (not just a round-by-round list) built from the actual assigned draft
-  slots, with team avatars per cell
-- Trades are annotated inline with the full custody chain (`Team A → Team B → Team C`), not just
-  current vs. original owner — a pick traded twice shows both hops
+- A real draft-board grid in **true draft order**: rounds 1–6 run linear, rounds 7+ snake (the
+  order reverses each round), exactly as the league runs it. Columns are the actual pick
+  positions, so reading a row left-to-right is the real pick sequence and every cell's owner
+  matches Sleeper's board.
+- Trades are annotated inline with the full custody chain (`Team A → Team B → Team C`), showing
+  each pick's snake-initial owner through to its current owner — a pick traded twice shows both hops
 - "Highlight team" view blacks out every other team's cells so you can see exactly what one
   team's draft capital looks like
+- A built-in **reconciliation guardrail** cross-checks the reconstructed board against Sleeper's
+  real pick ownership on every load and warns loudly if they ever diverge
 - Pick transaction log sourced from actual trade data, ready for multi-hop trades and (once the
-  league has real keepers) forfeited-picks
+  league has real keepers) forfeited picks
 
 **League Rules** — quick reference for the actual keeper/tag/waiver rules, so the numbers above
 aren't floating without context.
@@ -62,7 +66,7 @@ streamlit run dashboard.py
 | `sleeper_api.py` | Thin wrapper over Sleeper's public REST API and its (undocumented but stable) stats endpoint, with on-disk caching for the heavy calls |
 | `ledger.py` | All the derived logic — keeper eligibility, tag cost, draft/trade history reconstruction, previous-season stats. This is where the actual rule engine lives |
 | `dashboard.py` | The Streamlit UI — tables, filters, the draft board grid, the player detail modal |
-| `overrides.yaml` | Manual overlay for the one thing Sleeper has no concept of at all: franchise tags |
+| `overrides.yaml` | Manual overlay for what Sleeper can't represent: franchise tags (a permanent house rule) and, as an escape hatch, manual pick ownership when a pick moved outside a normal trade |
 | `cache/` | Local cache for the player directory and season stats (gitignored, rebuilds automatically) |
 
 ## How the keeper logic works
@@ -88,6 +92,28 @@ rosters, and transactions. Everything keeper-related is reconstructed from that 
   true` on the pick), the whole system picks them up automatically — the manual overlay is only
   needed for franchise tags, permanently, since that's a pure house rule.
 
+## How the draft board works
+
+Sleeper can't run a linear-then-snake draft, so the commissioner sets the draft to `linear` and
+manually reassigns picks to fake a snake after round 6 (the last pick of round 6 picks again first
+in round 7). That manual reassignment has two side effects the dashboard has to work around: it
+pollutes Sleeper's `traded_picks` data with dozens of fake "trades" that are really just the snake
+conversion, and it *overwrites* any real pick trade sitting on those same picks. So the board is
+reconstructed from clean sources rather than trusting Sleeper's live pick data directly:
+
+- **Ownership** starts from identity (each team owns its own pick) and applies only real trades
+  from the permanent transaction log (`type: trade`), which a manual reassignment can never
+  overwrite. Sleeper's `traded_picks` endpoint is trusted only for the rounds the snake conversion
+  doesn't touch.
+- **The snake is display-only.** A pick's position within its round is computed from the league's
+  own convention (`SNAKE_AFTER_ROUND_BY_SEASON` in `ledger.py`), not from Sleeper's stale `linear`
+  flag. The convention is hardcoded per season, so a future year that changes format just adds an
+  entry — nothing is assumed to carry forward.
+- **A reconciliation check** (`reconcile_board_against_sleeper`) independently derives what Sleeper
+  will actually draft, from `traded_picks` + the slot order, and compares it to the reconstructed
+  board cell-for-cell. A match is strong evidence both are right; a mismatch means a pick changed
+  hands outside a normal trade and shows up as a prominent warning instead of a silently wrong board.
+
 ## Known limitations
 
 - If a UDFA sits on a roster across multiple seasons without ever being run through a draft as a
@@ -95,12 +121,14 @@ rosters, and transactions. Everything keeper-related is reconstructed from that 
   dashboard falls back to "most recently completed season," which is correct today (the league
   has only one prior season) but should be re-checked as more seasons accumulate. Affected rows
   are flagged internally via `keeper_clock_start_estimated`.
-- Draft board columns are labeled by pick position (`Pick 1`, `Pick 2`, ...), not by team,
-  because a commissioner manually converting part of the draft to a snake format later wouldn't
-  be reflected in Sleeper's draft-order data — a fixed team-per-column header would go stale.
-- The pick-transaction log only reads actual `trade` transactions, so a commissioner manually
-  reassigning pick slots (e.g. converting to a snake after some round) intentionally does **not**
-  show up there — that's not a roster transaction.
+- The linear-then-snake convention is hardcoded per season in `SNAKE_AFTER_ROUND_BY_SEASON`
+  (`ledger.py`). If a future draft changes format (different pivot round, all-snake, all-linear),
+  that entry must be updated — it's deliberately not auto-detected, since inferring it from the
+  reassignment pattern would be fragile.
+- Real pick trades are recovered from Sleeper's `trade` transactions, so a trade executed by
+  manually reassigning a pick (instead of using Sleeper's trade tool) won't be picked up
+  automatically — record those in `overrides.yaml`. The reconciliation guardrail flags the
+  discrepancy if it ever happens, so it can't go unnoticed.
 
 ## Data source
 
