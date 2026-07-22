@@ -316,6 +316,19 @@ def build_player_ledger(data, overrides=None):
             max_tag_years = 0 if draft_status == "udfa" else min(max(keeper_value_round - 1, 0), 2)
             tags_remaining = max(max_tag_years - franchise_tag_years_used, 0)
 
+            # The round it actually costs to keep this player next season. While
+            # standard tenure remains, that's the player's keeper-value round. Once
+            # tenure is exhausted the only remaining path is a franchise tag, whose
+            # next-year cost is R-1 then R-2 of the current value (one round cheaper
+            # per tag-year already used). With nothing left, there is no keeper cost.
+            if years_remaining_keepable > 0:
+                current_keeper_cost = f"Round {keeper_value_round}"
+            elif tags_remaining > 0:
+                next_tag_cost_round = keeper_value_round - 1 - franchise_tag_years_used
+                current_keeper_cost = f"N/A — franchise tag only (Round {next_tag_cost_round})"
+            else:
+                current_keeper_cost = "N/A"
+
             chain = get_player_acquisition_chain(data, pid, franchise_tag_years_used)
             acquisition_history = ", ".join(chain) if chain else "Unknown"
 
@@ -342,6 +355,7 @@ def build_player_ledger(data, overrides=None):
                     "keeper_clock_start_season": keeper_clock_start_season,
                     "keeper_clock_start_estimated": keeper_clock_start_estimated,
                     "keeper_value_round": keeper_value_round,
+                    "current_keeper_cost": current_keeper_cost,
                     "years_kept_so_far": years_kept_after,
                     "seasons_rostered": seasons_rostered,
                     "max_tenure_years": max_tenure_years,
@@ -600,6 +614,53 @@ def get_pick_chain(pick_txn_df, season, round_, original_team):
     return [original_team] + list(matches["to_team"])
 
 
+
+
+def past_draft_seasons(data):
+    """Seasons that have an actual, populated draft in Sleeper, oldest first.
+    picks_by_season only ever contains seasons whose draft has run (an unstarted
+    draft returns no picks), so this is exactly the set of past/complete drafts."""
+    return sorted(data.get("picks_by_season", {}), key=int)
+
+
+def build_past_draft_board(data, season):
+    """Every pick of a completed draft, verbatim from Sleeper - who each team
+    actually took. Placed by real draft order (derived from the sequential
+    pick_no), so reading a round left-to-right is the exact sequence picks were
+    made, snake rounds included, with the drafting team shown in each cell."""
+    season = str(season)
+    team_labels = _team_labels(data["rosters"], data["users"])
+    players_meta = data["players"]
+    season_team_count = _season_team_count(data)
+    num_teams = season_team_count.get(season) or len(data["rosters"]) or 10
+
+    rows = []
+    for pick in data.get("picks_by_season", {}).get(season, []):
+        pid = pick.get("player_id")
+        meta = players_meta.get(pid, {}) if pid else {}
+        name = (
+            meta.get("full_name")
+            or f"{meta.get('first_name', '')} {meta.get('last_name', '')}".strip()
+            or (pid or "—")
+        )
+        pick_no = pick.get("pick_no")
+        pick_in_round = ((pick_no - 1) % num_teams) + 1 if pick_no else None
+        rows.append(
+            {
+                "season": season,
+                "round": pick["round"],
+                "pick_no": pick_no,
+                "pick_in_round": pick_in_round,
+                "pick_display": _format_pick(season, pick["round"], pick_no, season_team_count),
+                "player_id": pid,
+                "player_name": name,
+                "position": meta.get("position"),
+                "nfl_team": meta.get("team"),
+                "team": team_labels.get(pick.get("roster_id"), pick.get("roster_id")),
+                "is_keeper": bool(pick.get("is_keeper")),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def get_team_visual_info(data):

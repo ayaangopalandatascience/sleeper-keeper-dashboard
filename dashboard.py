@@ -328,6 +328,71 @@ def render_draft_board_grid(board_df, pick_txn_df, team_visuals, highlight_team=
     st.markdown(_flatten_html(grid_html), unsafe_allow_html=True)
 
 
+def render_past_draft_grid(board_df, team_visuals):
+    """A completed draft in true draft order, each cell showing the player taken
+    and the team that took them. Same grid language as the future-draft board,
+    but cells are keyed to who was *picked* (verbatim from Sleeper) rather than
+    who owns a future pick. Keeper picks (once any exist) are tinted."""
+    if board_df.empty:
+        st.caption("No draft data found for this season.")
+        return
+
+    positions = sorted(int(p) for p in board_df["pick_in_round"].dropna().unique())
+    rounds = sorted(board_df["round"].unique())
+
+    def team_chip(team, avatar_size=18):
+        v = team_visuals.get(team, {})
+        avatar = v.get("avatar_url")
+        img = f'<img src="{avatar}" style="width:{avatar_size}px;height:{avatar_size}px;border-radius:50%;object-fit:cover;margin-right:5px;border:1px solid var(--sd-border);">' if avatar else ""
+        return f'<div style="display:flex;align-items:center;margin-top:5px;">{img}<span style="font-size:0.66rem;color:var(--sd-ink-2);">{html_lib.escape(str(team))}</span></div>'
+
+    header_cells = ['<div class="db-cell db-corner"></div>']
+    for p in positions:
+        header_cells.append(f'<div class="db-cell db-header">Pick {p}</div>')
+
+    body_cells = []
+    for rnd in rounds:
+        body_cells.append(f'<div class="db-cell db-round-label">R{rnd}</div>')
+        round_rows = board_df[board_df["round"] == rnd]
+        for pos in positions:
+            cell_rows = round_rows[round_rows["pick_in_round"] == pos]
+            if cell_rows.empty:
+                body_cells.append('<div class="db-cell db-empty"></div>')
+                continue
+            r = cell_rows.iloc[0]
+            name = html_lib.escape(str(r["player_name"]))
+            meta_bits = [str(r[c]) for c in ("position", "nfl_team") if pd.notna(r[c]) and r[c]]
+            meta_line = f'<div class="pd-meta">{html_lib.escape(" · ".join(meta_bits))}</div>' if meta_bits else ""
+            keeper_badge = '<span class="pd-keeper">KEPT</span>' if r["is_keeper"] else ""
+            cell_class = "db-cell db-traded" if r["is_keeper"] else "db-cell"
+            body_cells.append(
+                f'<div class="{cell_class}"><div class="pd-name">{name}{keeper_badge}</div>'
+                f'{meta_line}{team_chip(r["team"])}</div>'
+            )
+
+    grid_html = f"""
+    {TABLE_STYLE}
+    <style>
+    .db-grid {{ display:grid; grid-template-columns: 46px repeat({len(positions)}, minmax(120px,1fr)); gap:6px; margin-top:10px; }}
+    .db-cell {{ border:1px solid var(--sd-border); border-radius:8px; padding:7px 8px;
+      min-height:62px; display:flex; flex-direction:column; justify-content:center; background:var(--sd-header-bg); }}
+    .db-header {{ font-weight:700; font-size:0.72rem; justify-content:center; align-items:center;
+      color:var(--sd-ink-muted); text-transform:uppercase; letter-spacing:0.03em; background:transparent; border:none; }}
+    .db-round-label {{ border:none; background:transparent; font-weight:700; align-items:center; font-size:0.8rem; color:var(--sd-ink-2); }}
+    .db-corner {{ border:none; background:transparent; }}
+    .db-traded {{ background:var(--sd-amber-wash); }}
+    .db-empty {{ opacity:0.25; background:transparent; }}
+    .pd-name {{ font-size:0.78rem; font-weight:600; color:var(--sd-ink); line-height:1.2; }}
+    .pd-meta {{ font-size:0.65rem; color:var(--sd-ink-muted); margin-top:2px; }}
+    .pd-keeper {{ font-size:0.55rem; font-weight:700; color:var(--sd-yellow); margin-left:5px; vertical-align:middle; letter-spacing:0.04em; }}
+    </style>
+    <div class="sd-table-wrap">
+    <div class="db-grid">{''.join(header_cells)}{''.join(body_cells)}</div>
+    </div>
+    """
+    st.markdown(_flatten_html(grid_html), unsafe_allow_html=True)
+
+
 def render_player_detail(data, row):
     headshot_url = f"https://sleepercdn.com/content/nfl/players/{row['player_id']}.jpg"
     nfl_team = row["nfl_team"] if pd.notna(row["nfl_team"]) else None
@@ -360,6 +425,7 @@ def render_player_detail(data, row):
         "Keeper Metrics",
         [
             ("Status", html_lib.escape(str(row["keeper_status_summary"]))),
+            ("Current Keeper Cost", html_lib.escape(str(row["current_keeper_cost"]))),
             ("Keeper Years Remaining", row["years_remaining_keepable"]),
             ("Tags Remaining", row["tags_remaining"]),
             ("Total Potential Years", row["total_potential_keeper_years"]),
@@ -454,7 +520,9 @@ def main():
             + "\n".join(f"- {m}" for m in board_mismatches)
         )
 
-    tab_players, tab_picks, tab_rules = st.tabs(["Player / Keeper Ledger", "Draft Picks", "League Rules"])
+    tab_players, tab_picks, tab_past, tab_rules = st.tabs(
+        ["Player / Keeper Ledger", "Draft Picks", "Past Drafts", "League Rules"]
+    )
 
     with tab_players:
         st.subheader("Player / Keeper Ledger")
@@ -564,8 +632,28 @@ def main():
                 hide_index=True,
             )
 
+    with tab_past:
+        st.subheader("Past Drafts")
+        past_seasons = ledger.past_draft_seasons(data)
+        if not past_seasons:
+            st.caption("No completed drafts are loaded yet.")
+        else:
+            past_season = st.selectbox("Season", list(reversed(past_seasons)), key="past_draft_season")
+            st.caption(
+                "Every pick exactly as Sleeper ran it — who each team took, in true draft order. "
+                "Columns are pick positions, so each row reads left-to-right in the real pick sequence "
+                "(snake rounds included). For reference and posterity."
+            )
+            past_board = ledger.build_past_draft_board(data, past_season)
+            render_past_draft_grid(past_board, team_visuals)
+
     with tab_rules:
         st.subheader("Quick Reference")
+        st.markdown(
+            "📄 **Full rules:** [DA RULES (Google Doc)]"
+            "(https://docs.google.com/document/d/19Dcv1vURKFLobVE1ulPA0-QJNSiP3L5gXlaADTYnupg/edit?tab=t.jye2r7kacjlu)"
+            " — the official source of truth. The summary below is a condensed reference."
+        )
         st.markdown(
             """
 - **Max keepers:** 5 players per team annually
