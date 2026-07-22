@@ -328,11 +328,12 @@ def render_draft_board_grid(board_df, pick_txn_df, team_visuals, highlight_team=
     st.markdown(_flatten_html(grid_html), unsafe_allow_html=True)
 
 
-def render_past_draft_grid(board_df, team_visuals):
+def render_past_draft_grid(board_df, team_visuals, highlight_team=None):
     """A completed draft in true draft order, each cell showing the player taken
     and the team that took them. Same grid language as the future-draft board,
     but cells are keyed to who was *picked* (verbatim from Sleeper) rather than
-    who owns a future pick. Keeper picks (once any exist) are tinted."""
+    who owns a future pick. Keeper picks (once any exist) are tinted. When
+    highlight_team is set, every pick not made by that team is blacked out."""
     if board_df.empty:
         st.caption("No draft data found for this season.")
         return
@@ -366,6 +367,9 @@ def render_past_draft_grid(board_df, team_visuals):
                 body_cells.append('<div class="db-cell db-empty"></div>')
                 continue
             r = cell_rows.iloc[0]
+            if highlight_team and r["team"] != highlight_team:
+                body_cells.append('<div class="db-cell db-blackout"></div>')
+                continue
             name = html_lib.escape(str(r["player_name"]))
             meta_bits = [str(r[c]) for c in ("position", "nfl_team") if pd.notna(r[c]) and r[c]]
             meta_text = html_lib.escape(" · ".join(meta_bits))
@@ -392,6 +396,7 @@ def render_past_draft_grid(board_df, team_visuals):
     .db-corner {{ border:none; background:transparent; }}
     .db-traded {{ background:var(--sd-amber-wash); }}
     .db-empty {{ opacity:0.25; background:transparent; }}
+    .db-blackout {{ background:rgba(20,20,20,0.92); border-color:rgba(20,20,20,0.92); }}
     .pd-name {{ font-size:0.78rem; font-weight:600; color:var(--sd-ink); line-height:1.2; }}
     .pd-meta {{ display:flex; align-items:center; gap:5px; font-size:0.65rem; color:var(--sd-ink-muted); margin-top:3px; }}
     .pd-logo-wrap {{ display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px;
@@ -653,14 +658,24 @@ def main():
         if not past_seasons:
             st.caption("No completed drafts are loaded yet.")
         else:
-            past_season = st.selectbox("Season", list(reversed(past_seasons)), key="past_draft_season")
+            ps_col, ph_col = st.columns(2)
+            with ps_col:
+                past_season = st.selectbox("Season", list(reversed(past_seasons)), key="past_draft_season")
+            past_board = ledger.build_past_draft_board(data, past_season)
+            with ph_col:
+                past_teams = sorted(past_board["team"].dropna().unique())
+                past_highlight = st.selectbox(
+                    "Highlight team (blacks out everyone else's picks)",
+                    ["(All teams)"] + past_teams,
+                    key="past_draft_highlight",
+                )
+            past_highlight_team = None if past_highlight == "(All teams)" else past_highlight
             st.caption(
                 "Every pick exactly as Sleeper ran it — who each team took, in true draft order. "
                 "Columns are pick positions, so each row reads left-to-right in the real pick sequence "
                 "(snake rounds included). For reference and posterity."
             )
-            past_board = ledger.build_past_draft_board(data, past_season)
-            render_past_draft_grid(past_board, team_visuals)
+            render_past_draft_grid(past_board, team_visuals, past_highlight_team)
 
     with tab_rules:
         st.subheader("Quick Reference")
